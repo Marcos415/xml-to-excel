@@ -1,4 +1,5 @@
 Flask
 pandas
-openpyxl # Necessário para pandas salvar em .xlsx
-lxml # Se você usa lxml para parsing XML
+openpyxl
+lxml
+gunicorn
