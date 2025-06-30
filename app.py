@@ -4,7 +4,7 @@ import shutil
 from flask import Flask, render_template, request, send_file
 from werkzeug.utils import secure_filename
 import pandas as pd
-from datetime import datetime # Certifique-se de importar datetime
+from datetime import datetime, date # Import date here too
 
 from xml_processor import processar_xmls_e_extrair_para_dataframe
 
@@ -42,7 +42,7 @@ def processar_arquivos():
         if not zip_files or all(f.filename == '' for f in zip_files):
             return "Nenhum arquivo selecionado.", 400
 
-        for i, file in enumerate(zip_files): # Usar 'i' para identificar qual arquivo está sendo processado
+        for i, file in enumerate(zip_files):
             if not allowed_file(file.filename):
                 return f"Tipo de arquivo não permitido para '{file.filename}'. Apenas arquivos .{', .'.join(ALLOWED_EXTENSIONS)} são aceitos.", 400
 
@@ -54,7 +54,7 @@ def processar_arquivos():
             print(f"\n--- Processando ZIP: {filename} ({i+1}/{len(zip_files)}) ---")
             print(f"ZIP salvo em: {zip_path}")
 
-            temp_xml_dir_name = os.path.splitext(filename)[0] + f"_{datetime.now().strftime('%Y%m%d%H%M%S%f')}" # Adiciona timestamp para unicidade
+            temp_xml_dir_name = os.path.splitext(filename)[0] + f"_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
             temp_xml_dir_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_xml_dir_name)
             os.makedirs(temp_xml_dir_path, exist_ok=True)
             temp_paths_to_clean.append(temp_xml_dir_path)
@@ -63,9 +63,8 @@ def processar_arquivos():
 
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_xml_dir_path)
-                print(f"Conteúdo do ZIP descompactado (nomes dos membros): {zip_ref.namelist()}") # O que está dentro do ZIP
+                print(f"Conteúdo do ZIP descompactado (nomes dos membros): {zip_ref.namelist()}")
 
-            # --- DEPURANDO A ESTRUTURA DE PASTAS APÓS DESCOMPACTAÇÃO ---
             print(f"Conteúdo da pasta descompactada '{temp_xml_dir_path}':")
             for root_walk, dirs_walk, files_walk in os.walk(temp_xml_dir_path):
                 level = root_walk.replace(temp_xml_dir_path, '').count(os.sep)
@@ -75,7 +74,6 @@ def processar_arquivos():
                 for f_name in files_walk:
                     print(f'{subindent}{f_name}')
             print("--- Fim da depuração de estrutura ---")
-
 
             df_resultado_individual = processar_xmls_e_extrair_para_dataframe(temp_xml_dir_path)
             
@@ -89,36 +87,54 @@ def processar_arquivos():
 
         df_final = pd.concat(todos_dfs, ignore_index=True)
 
+        # --- ORDENAÇÃO POR DATA DE EMISSÃO DECRESCENTE E FORMATAÇÃO ---
+        if 'DATA' in df_final.columns and not df_final['DATA'].empty:
+            # Ensure the column is datetime-like for proper sorting
+            # 'errors='coerce' will turn unparseable dates into NaT (Not a Time)
+            df_final['DATA'] = pd.to_datetime(df_final['DATA'], errors='coerce')
+            
+            # Remove rows where date conversion failed, so they don't interfere with sorting
+            df_final.dropna(subset=['DATA'], inplace=True)
+            
+            # Sort by 'DATA' in descending order (most recent first)
+            df_final = df_final.sort_values(by='DATA', ascending=False)
+            
+            # Optional: Format the 'DATA' column back to 'DD/MM/YYYY' string for Excel display
+            # If you prefer Excel's native date format, you can remove this line.
+            df_final['DATA'] = df_final['DATA'].dt.strftime('%d/%m/%Y')
+        else:
+            print("Warning: 'DATA' column not found or is empty for sorting.")
+            
         excel_filename = f"resultado_consolidado_xmls_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         excel_path = os.path.join(app.config['GENERATED_FOLDER'], excel_filename)
 
         df_final.to_excel(excel_path, index=False)
-        print(f"\nExcel final salvo em: {excel_path}")
+        print(f"\nExcel final saved to: {excel_path}")
 
         return send_file(excel_path, as_attachment=True, download_name=excel_filename,
                          mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
     except zipfile.BadZipFile as e:
-        print(f"DEBUG: Erro de ZIP inválido: {e}")
-        return f"Erro: Um dos arquivos enviados ('{filename}' se disponível) não é um ZIP válido ou está corrompido. Por favor, envie arquivos .zip.", 400
+        print(f"DEBUG: Invalid ZIP file error: {e}")
+        return f"Error: One of the uploaded files ('{filename}' if available) is not a valid ZIP or is corrupted. Please upload .zip files.", 400
     except Exception as e:
-        print(f"DEBUG: Ocorreu um erro inesperado no servidor: {e}")
-        return f"Erro interno do servidor durante o processamento: {e}", 500
+        print(f"DEBUG: An unexpected server error occurred: {e}")
+        return f"Internal server error during processing: {e}", 500
     finally:
         for path in temp_paths_to_clean:
             if os.path.exists(path):
                 try:
                     if os.path.isdir(path):
                         shutil.rmtree(path)
-                        print(f"Diretório temporário removido: {path}")
+                        print(f"Temporary directory removed: {path}")
                     else:
                         os.remove(path)
-                        print(f"Arquivo temporário removido: {path}")
+                        print(f"Temporary file removed: {path}")
                 except OSError as e:
-                    print(f"DEBUG: Erro ao remover path temporário {path}: {e}")
-        # A remoção do excel_path é mais complexa devido ao send_file, deixamos como estava.
+                    print(f"DEBUG: Error removing temporary path {path}: {e}")
+        # Excel path removal is more complex due to send_file, it remains as is.
         # if 'excel_path' in locals() and os.path.exists(excel_path):
-        #      pass
+        #     pass
 
 if __name__ == '__main__':
     app.run(debug=True)
