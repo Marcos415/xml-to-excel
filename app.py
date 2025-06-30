@@ -4,7 +4,7 @@ import shutil
 from flask import Flask, render_template, request, send_file
 from werkzeug.utils import secure_filename
 import pandas as pd
-from datetime import datetime # Agora só precisamos de datetime aqui
+from datetime import datetime # Importar datetime para uso geral
 
 from xml_processor import processar_xmls_e_extrair_para_dataframe
 
@@ -87,29 +87,64 @@ def processar_arquivos():
 
         df_final = pd.concat(todos_dfs, ignore_index=True)
 
-        # --- NOVO: ORDENAÇÃO POR DATA_E_HORA CRESCENTE E FORMATAÇÃO ---
-        if 'DATA_E_HORA' in df_final.columns and not df_final['DATA_E_HORA'].empty:
-            # Converte a coluna 'DATA_E_HORA' para o tipo datetime.
-            # 'errors='coerce' transforma valores inválidos em NaT (Not a Time).
-            df_final['DATA_E_HORA'] = pd.to_datetime(df_final['DATA_E_HORA'], errors='coerce')
-            
-            # Remove linhas onde a conversão da data/hora falhou (contêm NaT)
-            df_final.dropna(subset=['DATA_E_HORA'], inplace=True)
-            
-            # Ordena o DataFrame pela coluna 'DATA_E_HORA' em ordem crescente (do mais antigo para o mais recente)
-            df_final = df_final.sort_values(by='DATA_E_HORA', ascending=True) # MUDANÇA AQUI: ascending=True
-            
-            # Opcional: Formata a coluna 'DATA_E_HORA' de volta para string 'DD/MM/YYYY HH:MM:SS' para o Excel.
-            # Se preferir o formato nativo do Excel, pode remover esta linha.
-            df_final['DATA_E_HORA'] = df_final['DATA_E_HORA'].dt.strftime('%d/%m/%Y %H:%M:%S')
-            
-            # Opcional: Reordenar as colunas para que 'DATA_E_HORA' apareça como 'DATA' se quiser
-            # ou manter o nome 'DATA_E_HORA'. Se quiser que a coluna no Excel se chame 'DATA',
-            # pode renomear ela aqui:
-            df_final.rename(columns={'DATA_E_HORA': 'DATA'}, inplace=True)
+        # --- ORDENAÇÃO CRESCENTE E FORMATAÇÃO ---
+        # 1. Ordenar por DATA (crescente)
+        if 'DATA' in df_final.columns and not df_final['DATA'].empty:
+            df_final['DATA'] = pd.to_datetime(df_final['DATA'], errors='coerce')
+            df_final.dropna(subset=['DATA'], inplace=True)
+        
+        # 2. Ordenar por NUMERO_NF (crescente, após a data)
+        # 3. Ordenar por VALOR TOTAL NF (crescente, após data e número da nota)
+        # Converte para numérico para ordenar corretamente, se não for, tenta converter para string
+        if 'NUMERO_NF' in df_final.columns:
+            df_final['NUMERO_NF'] = pd.to_numeric(df_final['NUMERO_NF'], errors='coerce').fillna(df_final['NUMERO_NF'])
+        
+        if 'VALOR TOTAL NF' in df_final.columns:
+            df_final['VALOR TOTAL NF'] = pd.to_numeric(df_final['VALOR TOTAL NF'], errors='coerce').fillna(df_final['VALOR TOTAL NF'])
+
+        # Define a ordem de ordenação
+        sort_columns = []
+        if 'DATA' in df_final.columns:
+            sort_columns.append('DATA')
+        if 'NUMERO_NF' in df_final.columns:
+            sort_columns.append('NUMERO_NF')
+        if 'VALOR TOTAL NF' in df_final.columns:
+            sort_columns.append('VALOR TOTAL NF')
+
+        if sort_columns:
+            df_final = df_final.sort_values(by=sort_columns, ascending=True) # ORDENAÇÃO CRESCENTE
         else:
-            print("Aviso: Coluna 'DATA_E_HORA' não encontrada ou está vazia no DataFrame final para ordenação.")
-            
+            print("Aviso: Nenhuma coluna de ordenação (DATA, NUMERO_NF, VALOR TOTAL NF) encontrada.")
+
+        # --- FORMATAR COLUNAS PARA SAÍDA NO EXCEL ---
+        # Formata a DATA para DD/MM/YYYY
+        if 'DATA' in df_final.columns:
+            df_final['DATA'] = df_final['DATA'].dt.strftime('%d/%m/%Y')
+        
+        # Formata VALOR TOTAL NF com '$' no início
+        if 'VALOR TOTAL NF' in df_final.columns:
+            df_final['VALOR TOTAL NF'] = df_final['VALOR TOTAL NF'].apply(
+                lambda x: f"$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if isinstance(x, (int, float)) else x
+            )
+            # A formatação acima é para BR (milhar com '.', decimal com ','). Se o valor for string, mantém.
+
+        # Reorganizar a ordem das colunas no DataFrame final para o Excel
+        final_columns_order = []
+        if 'DATA' in df_final.columns:
+            final_columns_order.append('DATA')
+        if 'NUMERO_NF' in df_final.columns:
+            final_columns_order.append('NUMERO_NF')
+        if 'VALOR TOTAL NF' in df_final.columns:
+            final_columns_order.append('VALOR TOTAL NF')
+        
+        # Adiciona outras colunas que possam existir, mas não estão na ordem desejada
+        for col in df_final.columns:
+            if col not in final_columns_order:
+                final_columns_order.append(col)
+
+        df_final = df_final[final_columns_order]
+
+
         excel_filename = f"resultado_consolidado_xmls_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         excel_path = os.path.join(app.config['GENERATED_FOLDER'], excel_filename)
 

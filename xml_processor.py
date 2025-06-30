@@ -1,9 +1,20 @@
 import os
 import xml.etree.ElementTree as ET
 import pandas as pd
-from datetime import datetime # Agora usaremos apenas datetime
+from datetime import datetime, date # Importar 'date' novamente para a data sem hora
 
 def processar_xmls_e_extrair_para_dataframe(diretorio_xmls):
+    """
+    Processa todos os arquivos XML em um diretório (incluindo subpastas)
+    e extrai DATA (sem hora), NUMERO_NF e VALOR TOTAL NF.
+
+    Args:
+        diretorio_xmls (str): O caminho para o diretório contendo os arquivos XML.
+
+    Returns:
+        pd.DataFrame: Um DataFrame do pandas com as colunas DATA, NUMERO_NF,
+                      e VALOR TOTAL NF. Retorna um DataFrame vazio se nenhum XML válido for encontrado.
+    """
     dados_extraidos = []
 
     for root, _, files in os.walk(diretorio_xmls):
@@ -19,22 +30,6 @@ def processar_xmls_e_extrair_para_dataframe(diretorio_xmls):
                         'nfe': 'http://www.portalfiscal.inf.br/nfe',
                         'cte': 'http://www.portalfiscal.inf.br/cte'
                     }
-
-                    # --- Extração da CHAVE DE 44 DÍGITOS ---
-                    chave_44_digitos = None
-                    infNFe_element = root_element.find('.//nfe:infNFe', namespaces)
-                    if infNFe_element is not None and 'Id' in infNFe_element.attrib:
-                        chave_44_digitos = infNFe_element.attrib['Id'].replace('NFe', '')
-                    
-                    if chave_44_digitos is None:
-                        chNFe_element = root_element.find('.//nfe:chNFe', namespaces)
-                        if chNFe_element is not None:
-                            chave_44_digitos = chNFe_element.text
-                    
-                    if chave_44_digitos is None:
-                        chCTe_element = root_element.find('.//cte:chCTe', namespaces)
-                        if chCTe_element is not None:
-                            chave_44_digitos = chCTe_element.text
 
                     # --- Extração do NÚMERO DA NF (Número do Documento) ---
                     numero_nf = None
@@ -55,49 +50,40 @@ def processar_xmls_e_extrair_para_dataframe(diretorio_xmls):
                             valor_total_nf = float(vNF_element.text)
                         except ValueError:
                             print(f"Aviso: Não foi possível converter vNF '{vNF_element.text}' para float em {filename}. Armazenando como string.")
-                            valor_total_nf = vNF_element.text
+                            valor_total_nf = vNF_element.text # Armazena como string se a conversão falhar
 
-                    # --- NOVO: Extração e Tratamento da DATA E HORA COMPLETAS ---
-                    data_hora_emissao_str = None
-                    # Tenta nfe:dhEmi (formato com data e hora)
+                    # --- NOVO: Extração da DATA SEM HORA ---
+                    data_emissao_str = None
+                    # Tenta nfe:dhEmi
                     dhEmi_element = root_element.find('.//nfe:ide/nfe:dhEmi', namespaces)
                     if dhEmi_element is not None:
-                        data_hora_emissao_str = dhEmi_element.text
+                        data_emissao_str = dhEmi_element.text
                     else:
-                        # Tenta nfe:dEmi (apenas data, mas vamos tentar combinar com hora padrão se necessário)
+                        # Tenta nfe:dEmi
                         dEmi_element = root_element.find('.//nfe:ide/nfe:dEmi', namespaces)
                         if dEmi_element is not None:
-                            data_hora_emissao_str = dEmi_element.text + 'T00:00:00' # Adiciona hora padrão se só tiver data
+                            data_emissao_str = dEmi_element.text
                     
                     # Tenta cte:dhEmi
-                    if data_hora_emissao_str is None:
+                    if data_emissao_str is None:
                         dhEmi_cte_element = root_element.find('.//cte:ide/cte:dhEmi', namespaces)
                         if dhEmi_cte_element is not None:
-                            data_hora_emissao_str = dhEmi_cte_element.text
+                            data_emissao_str = dhEmi_cte_element.text
                     
-                    data_nf_datetime_obj = None # Armazenará o objeto datetime completo
-                    mes_nf = None
-                    if data_hora_emissao_str:
+                    data_nf_obj = None # Armazenará o objeto date (apenas data)
+                    if data_emissao_str:
                         try:
-                            # Remove o fuso horário para facilitar a conversão
-                            if '+' in data_hora_emissao_str:
-                                data_hora_emissao_str = data_hora_emissao_str.split('+')[0]
-                            elif '-' in data_hora_emissao_str[data_hora_emissao_str.find('T'):]: # Verifica '-' após 'T'
-                                data_hora_emissao_str = data_hora_emissao_str.rsplit('-', 1)[0]
-                                
-                            data_nf_datetime_obj = datetime.fromisoformat(data_hora_emissao_str) # Converte para datetime
-                            mes_nf = data_nf_datetime_obj.strftime('%m/%Y')
+                            # Pega apenas a parte da data (AAAA-MM-DD), ignorando a hora e o fuso horário
+                            date_part = data_emissao_str.split('T')[0]
+                            data_nf_obj = datetime.strptime(date_part, '%Y-%m-%d').date() # Converte para objeto date
                         except ValueError:
-                            print(f"Aviso: Não foi possível parsear a data/hora '{data_hora_emissao_str}' do arquivo {filename}. Será tratada como nula.")
-                            data_nf_datetime_obj = None
-                            mes_nf = None
+                            print(f"Aviso: Não foi possível parsear a data '{data_emissao_str}' do arquivo {filename}. Será tratada como nula.")
+                            data_nf_obj = None
 
                     dados_extraidos.append({
-                        'MÊS': mes_nf,
-                        'DATA_E_HORA': data_nf_datetime_obj, # NOVO NOME DA COLUNA E TIPO
+                        'DATA': data_nf_obj, # Coluna DATA sem hora, como objeto date
                         'NUMERO_NF': numero_nf,
-                        'CHAVE DE 44 DÍGITOS': chave_44_digitos,
-                        'VALOR TOTAL NF': valor_total_nf
+                        'VALOR TOTAL NF': valor_total_nf # Valor como float ou string
                     })
 
                 except ET.ParseError as e:
