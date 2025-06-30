@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processador de XML para Excel</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Processar XMLs para Excel</h1>
+        <form id="uploadForm" action="/processar" method="post" enctype="multipart/form-data">
+            <label for="arquivo_zip">Selecione as pastas de XMLs (comprimidas em .zip):</label>
+            <input type="file" id="arquivo_zip" name="arquivos_zip[]" accept=".zip" multiple required>
+            <button type="submit">Executar Processamento e Baixar Excel</button>
+        </form>
+        <div id="status"></div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
