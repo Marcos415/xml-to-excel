@@ -4,7 +4,7 @@ import shutil
 from flask import Flask, render_template, request, send_file
 from werkzeug.utils import secure_filename
 import pandas as pd
-from datetime import datetime # Importar datetime para uso geral
+from datetime import datetime, date, time # Importar 'date' e 'time' também
 
 from xml_processor import processar_xmls_e_extrair_para_dataframe
 
@@ -87,63 +87,72 @@ def processar_arquivos():
 
         df_final = pd.concat(todos_dfs, ignore_index=True)
 
-        # --- ORDENAÇÃO CRESCENTE E FORMATAÇÃO ---
-        # 1. Ordenar por DATA (crescente)
+        # --- ORDENAÇÃO E FORMATAÇÃO ---
+        # 1. Preparar colunas para ordenação
         if 'DATA' in df_final.columns and not df_final['DATA'].empty:
             df_final['DATA'] = pd.to_datetime(df_final['DATA'], errors='coerce')
             df_final.dropna(subset=['DATA'], inplace=True)
         
-        # 2. Ordenar por NUMERO_NF (crescente, após a data)
-        # 3. Ordenar por VALOR TOTAL NF (crescente, após data e número da nota)
-        # Converte para numérico para ordenar corretamente, se não for, tenta converter para string
+        # Combinar DATA e HORA para uma ordenação mais precisa, se ambas existirem
+        # Criamos uma coluna temporária para ordenar
+        df_final['DATA_TEMP_ORDENACAO'] = pd.NaT # Inicializa com Not a Time
+        if 'DATA' in df_final.columns and 'HORA' in df_final.columns:
+            # Concatena a data com a string da hora (00:00:00) para criar um datetime completo
+            # pd.to_datetime pode lidar com string de date e time separadamente, mas juntar é mais seguro
+            # Certifique-se de que a coluna HORA seja string para evitar problemas de tipo
+            df_final['HORA_STR'] = df_final['HORA'].apply(lambda x: x.strftime('%H:%M:%S') if isinstance(x, time) else '00:00:00')
+            df_final['DATA_TEMP_ORDENACAO'] = pd.to_datetime(df_final['DATA'].dt.strftime('%Y-%m-%d') + ' ' + df_final['HORA_STR'], errors='coerce')
+        elif 'DATA' in df_final.columns:
+            df_final['DATA_TEMP_ORDENACAO'] = df_final['DATA'] # Se só tiver data, usa só a data
+
+        # Converter NUMERO_NF e VALOR TOTAL NF para numérico para ordenação correta
         if 'NUMERO_NF' in df_final.columns:
             df_final['NUMERO_NF'] = pd.to_numeric(df_final['NUMERO_NF'], errors='coerce').fillna(df_final['NUMERO_NF'])
         
         if 'VALOR TOTAL NF' in df_final.columns:
             df_final['VALOR TOTAL NF'] = pd.to_numeric(df_final['VALOR TOTAL NF'], errors='coerce').fillna(df_final['VALOR TOTAL NF'])
 
-        # Define a ordem de ordenação
+        # Define a ordem de ordenação (DATA_TEMP_ORDENACAO é a principal)
         sort_columns = []
-        if 'DATA' in df_final.columns:
-            sort_columns.append('DATA')
+        if 'DATA_TEMP_ORDENACAO' in df_final.columns:
+            sort_columns.append('DATA_TEMP_ORDENACAO')
         if 'NUMERO_NF' in df_final.columns:
             sort_columns.append('NUMERO_NF')
-        if 'VALOR TOTAL NF' in df_final.columns:
+        if 'VALOR TOTAL NF' in df_final.columns: # Mantendo VALOR TOTAL NF na ordenação também
             sort_columns.append('VALOR TOTAL NF')
 
         if sort_columns:
             df_final = df_final.sort_values(by=sort_columns, ascending=True) # ORDENAÇÃO CRESCENTE
         else:
-            print("Aviso: Nenhuma coluna de ordenação (DATA, NUMERO_NF, VALOR TOTAL NF) encontrada.")
+            print("Aviso: Nenhuma coluna de ordenação válida encontrada.")
 
         # --- FORMATAR COLUNAS PARA SAÍDA NO EXCEL ---
         # Formata a DATA para DD/MM/YYYY
         if 'DATA' in df_final.columns:
             df_final['DATA'] = df_final['DATA'].dt.strftime('%d/%m/%Y')
         
-        # Formata VALOR TOTAL NF com '$' no início
-        if 'VALOR TOTAL NF' in df_final.columns:
-            df_final['VALOR TOTAL NF'] = df_final['VALOR TOTAL NF'].apply(
-                lambda x: f"$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if isinstance(x, (int, float)) else x
-            )
-            # A formatação acima é para BR (milhar com '.', decimal com ','). Se o valor for string, mantém.
+        # Formata a HORA para HH:MM:SS
+        if 'HORA' in df_final.columns:
+            df_final['HORA'] = df_final['HORA'].apply(lambda x: x.strftime('%H:%M:%S') if isinstance(x, time) else None)
 
         # Reorganizar a ordem das colunas no DataFrame final para o Excel
-        final_columns_order = []
-        if 'DATA' in df_final.columns:
-            final_columns_order.append('DATA')
-        if 'NUMERO_NF' in df_final.columns:
-            final_columns_order.append('NUMERO_NF')
-        if 'VALOR TOTAL NF' in df_final.columns:
-            final_columns_order.append('VALOR TOTAL NF')
+        # Incluindo todas as colunas que agora serão retornadas
+        final_columns_order = [
+            'MÊS',
+            'DATA',
+            'HORA',
+            'NUMERO_NF',
+            'CHAVE DE 44 DÍGITOS',
+            'VALOR TOTAL NF'
+        ]
+        # Remove colunas temporárias
+        df_final = df_final.drop(columns=['DATA_TEMP_ORDENACAO', 'HORA_STR'], errors='ignore')
         
-        # Adiciona outras colunas que possam existir, mas não estão na ordem desejada
-        for col in df_final.columns:
-            if col not in final_columns_order:
-                final_columns_order.append(col)
-
-        df_final = df_final[final_columns_order]
-
+        # Garante que todas as colunas existentes no df_final sejam mantidas, mesmo que não estejam em final_columns_order
+        # e as coloca no final, se for o caso.
+        existing_cols_ordered = [col for col in final_columns_order if col in df_final.columns]
+        other_cols = [col for col in df_final.columns if col not in existing_cols_ordered]
+        df_final = df_final[existing_cols_ordered + other_cols]
 
         excel_filename = f"resultado_consolidado_xmls_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         excel_path = os.path.join(app.config['GENERATED_FOLDER'], excel_filename)
